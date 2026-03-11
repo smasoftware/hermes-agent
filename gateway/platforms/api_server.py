@@ -2,10 +2,12 @@
 OpenAI-compatible API server platform adapter.
 
 Exposes an HTTP server with endpoints:
-- POST /v1/chat/completions  — OpenAI Chat Completions format (stateless)
-- POST /v1/responses         — OpenAI Responses API format (stateful via previous_response_id)
-- GET  /v1/models            — lists hermes-agent as an available model
-- GET  /health               — health check
+- POST /v1/chat/completions        — OpenAI Chat Completions format (stateless)
+- POST /v1/responses               — OpenAI Responses API format (stateful via previous_response_id)
+- GET  /v1/responses/{response_id} — Retrieve a stored response
+- DELETE /v1/responses/{response_id} — Delete a stored response
+- GET  /v1/models                  — lists hermes-agent as an available model
+- GET  /health                     — health check
 
 Any OpenAI-compatible frontend (Open WebUI, LobeChat, etc.) can connect
 to hermes-agent through this adapter.
@@ -82,8 +84,39 @@ class ResponseStore:
         while len(self._store) > self._max_size:
             self._store.popitem(last=False)
 
+    def delete(self, response_id: str) -> bool:
+        """Remove a response from the store. Returns True if found and deleted."""
+        if response_id in self._store:
+            del self._store[response_id]
+            return True
+        return False
+
     def __len__(self) -> int:
         return len(self._store)
+
+
+# ---------------------------------------------------------------------------
+# CORS middleware
+# ---------------------------------------------------------------------------
+
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+}
+
+
+if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def cors_middleware(request, handler):
+        """Add CORS headers to every response; handle OPTIONS preflight."""
+        if request.method == "OPTIONS":
+            return web.Response(status=200, headers=_CORS_HEADERS)
+        response = await handler(request)
+        response.headers.update(_CORS_HEADERS)
+        return response
+else:
+    cors_middleware = None  # type: ignore[assignment]
 
 
 class APIServerAdapter(BasePlatformAdapter):
@@ -271,7 +304,7 @@ class APIServerAdapter(BasePlatformAdapter):
         # Run the agent in an executor (run_conversation is synchronous)
         session_id = str(uuid.uuid4())
         try:
-            result = await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
@@ -305,9 +338,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 }
             ],
             "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
+                "prompt_tokens": usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
             },
         }
 
@@ -394,10 +427,14 @@ class APIServerAdapter(BasePlatformAdapter):
                 status=400,
             )
 
+        # Truncation support
+        if body.get("truncation") == "auto" and len(conversation_history) > 100:
+            conversation_history = conversation_history[-100:]
+
         # Run the agent
         session_id = str(uuid.uuid4())
         try:
-            result = await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
@@ -428,15 +465,8 @@ class APIServerAdapter(BasePlatformAdapter):
         else:
             full_history.append({"role": "assistant", "content": final_response})
 
-        # Store response for future chaining
-        if store:
-            self._response_store.put(response_id, {
-                "input": raw_input,
-                "output": final_response,
-                "conversation_history": full_history,
-                "instructions": instructions,
-                "created_at": created_at,
-            })
+        # Build output items (includes tool calls + final message)
+        output_items = self._extract_output_items(result)
 
         response_data = {
             "id": response_id,
@@ -444,26 +474,119 @@ class APIServerAdapter(BasePlatformAdapter):
             "status": "completed",
             "created_at": created_at,
             "model": body.get("model", "hermes-agent"),
-            "output": [
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": final_response,
-                        }
-                    ],
-                }
-            ],
+            "output": output_items,
             "usage": {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
             },
         }
 
+        # Store the complete response object for future chaining / GET retrieval
+        if store:
+            self._response_store.put(response_id, {
+                "response": response_data,
+                "conversation_history": full_history,
+                "instructions": instructions,
+            })
+
         return web.json_response(response_data)
+
+    # ------------------------------------------------------------------
+    # Agent execution
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # GET / DELETE response endpoints
+    # ------------------------------------------------------------------
+
+    async def _handle_get_response(self, request: "web.Request") -> "web.Response":
+        """GET /v1/responses/{response_id} — retrieve a stored response."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        response_id = request.match_info["response_id"]
+        stored = self._response_store.get(response_id)
+        if stored is None:
+            return web.json_response(
+                {"error": {"message": f"Response not found: {response_id}", "type": "invalid_request_error"}},
+                status=404,
+            )
+
+        return web.json_response(stored["response"])
+
+    async def _handle_delete_response(self, request: "web.Request") -> "web.Response":
+        """DELETE /v1/responses/{response_id} — delete a stored response."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        response_id = request.match_info["response_id"]
+        deleted = self._response_store.delete(response_id)
+        if not deleted:
+            return web.json_response(
+                {"error": {"message": f"Response not found: {response_id}", "type": "invalid_request_error"}},
+                status=404,
+            )
+
+        return web.json_response({
+            "id": response_id,
+            "object": "response",
+            "deleted": True,
+        })
+
+    # ------------------------------------------------------------------
+    # Output extraction helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_output_items(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Build the full output item array from the agent's messages.
+
+        Walks *result["messages"]* and emits:
+        - ``function_call`` items for each tool_call on assistant messages
+        - ``function_call_output`` items for each tool-role message
+        - a final ``message`` item with the assistant's text reply
+        """
+        items: List[Dict[str, Any]] = []
+        messages = result.get("messages", [])
+
+        for msg in messages:
+            role = msg.get("role")
+            if role == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    items.append({
+                        "type": "function_call",
+                        "name": func.get("name", ""),
+                        "arguments": func.get("arguments", ""),
+                        "call_id": tc.get("id", ""),
+                    })
+            elif role == "tool":
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id", ""),
+                    "output": msg.get("content", ""),
+                })
+
+        # Final assistant message
+        final = result.get("final_response", "")
+        if not final:
+            final = result.get("error", "(No response generated)")
+
+        items.append({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": final,
+                }
+            ],
+        })
+        return items
 
     # ------------------------------------------------------------------
     # Agent execution
@@ -475,11 +598,12 @@ class APIServerAdapter(BasePlatformAdapter):
         conversation_history: List[Dict[str, str]],
         ephemeral_system_prompt: Optional[str] = None,
         session_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
 
-        run_conversation() is synchronous, so we run it off the event loop.
+        Returns ``(result_dict, usage_dict)`` where *usage_dict* contains
+        ``input_tokens``, ``output_tokens`` and ``total_tokens``.
         """
         loop = asyncio.get_event_loop()
 
@@ -492,7 +616,12 @@ class APIServerAdapter(BasePlatformAdapter):
                 user_message=user_message,
                 conversation_history=conversation_history,
             )
-            return result
+            usage = {
+                "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+                "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+            }
+            return result, usage
 
         return await loop.run_in_executor(None, _run)
 
@@ -507,11 +636,13 @@ class APIServerAdapter(BasePlatformAdapter):
             return False
 
         try:
-            self._app = web.Application()
+            self._app = web.Application(middlewares=[cors_middleware])
             self._app.router.add_get("/health", self._handle_health)
             self._app.router.add_get("/v1/models", self._handle_models)
             self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)
             self._app.router.add_post("/v1/responses", self._handle_responses)
+            self._app.router.add_get("/v1/responses/{response_id}", self._handle_get_response)
+            self._app.router.add_delete("/v1/responses/{response_id}", self._handle_delete_response)
 
             self._runner = web.AppRunner(self._app)
             await self._runner.setup()

@@ -25,7 +25,9 @@ from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.api_server import (
     APIServerAdapter,
     ResponseStore,
+    _CORS_HEADERS,
     check_api_server_requirements,
+    cors_middleware,
 )
 
 
@@ -87,6 +89,17 @@ class TestResponseStore:
         store.put("resp_1", {"output": "v2"})
         assert store.get("resp_1") == {"output": "v2"}
         assert len(store) == 1
+
+    def test_delete_existing(self):
+        store = ResponseStore(max_size=10)
+        store.put("resp_1", {"output": "hello"})
+        assert store.delete("resp_1") is True
+        assert store.get("resp_1") is None
+        assert len(store) == 0
+
+    def test_delete_missing(self):
+        store = ResponseStore(max_size=10)
+        assert store.delete("resp_missing") is False
 
 
 # ---------------------------------------------------------------------------
@@ -188,11 +201,13 @@ def _make_adapter(api_key: str = "") -> APIServerAdapter:
 
 def _create_app(adapter: APIServerAdapter) -> web.Application:
     """Create the aiohttp app from the adapter (without starting the full server)."""
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/health", adapter._handle_health)
     app.router.add_get("/v1/models", adapter._handle_models)
     app.router.add_post("/v1/chat/completions", adapter._handle_chat_completions)
     app.router.add_post("/v1/responses", adapter._handle_responses)
+    app.router.add_get("/v1/responses/{response_id}", adapter._handle_get_response)
+    app.router.add_delete("/v1/responses/{response_id}", adapter._handle_delete_response)
     return app
 
 
@@ -333,7 +348,7 @@ class TestChatCompletionsEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/chat/completions",
                     json={
@@ -365,7 +380,7 @@ class TestChatCompletionsEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/chat/completions",
                     json={
@@ -391,7 +406,7 @@ class TestChatCompletionsEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/chat/completions",
                     json={
@@ -469,7 +484,7 @@ class TestResponsesEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/responses",
                     json={
@@ -496,7 +511,7 @@ class TestResponsesEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/responses",
                     json={
@@ -522,7 +537,7 @@ class TestResponsesEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/responses",
                     json={
@@ -549,7 +564,7 @@ class TestResponsesEndpoint:
         async with TestClient(TestServer(app)) as cli:
             # First request
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result_1
+                mock_run.return_value = (mock_result_1, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp1 = await cli.post(
                     "/v1/responses",
                     json={"model": "hermes-agent", "input": "What is 1+1?"},
@@ -567,7 +582,7 @@ class TestResponsesEndpoint:
             }
 
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result_2
+                mock_run.return_value = (mock_result_2, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp2 = await cli.post(
                     "/v1/responses",
                     json={
@@ -605,7 +620,7 @@ class TestResponsesEndpoint:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/responses",
                     json={
@@ -629,7 +644,7 @@ class TestResponsesEndpoint:
         async with TestClient(TestServer(app)) as cli:
             # First request with instructions
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp1 = await cli.post(
                     "/v1/responses",
                     json={
@@ -644,7 +659,7 @@ class TestResponsesEndpoint:
 
             # Second request without instructions
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp2 = await cli.post(
                     "/v1/responses",
                     json={
@@ -781,7 +796,7 @@ class TestMultipleSystemMessages:
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
             with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
-                mock_run.return_value = mock_result
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
                 resp = await cli.post(
                     "/v1/chat/completions",
                     json={
@@ -814,3 +829,333 @@ class TestSendMethod:
         result = await adapter.send("chat1", "hello")
         assert result.success is False
         assert "HTTP request/response" in result.error
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/responses/{response_id}
+# ---------------------------------------------------------------------------
+
+
+class TestGetResponse:
+    @pytest.mark.asyncio
+    async def test_get_stored_response(self, adapter):
+        """GET returns a previously stored response."""
+        mock_result = {"final_response": "Hello!", "messages": [], "api_calls": 1}
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            # Create a response first
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "Hi"},
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            response_id = data["id"]
+
+            # Now GET it
+            resp2 = await cli.get(f"/v1/responses/{response_id}")
+            assert resp2.status == 200
+            data2 = await resp2.json()
+            assert data2["id"] == response_id
+            assert data2["object"] == "response"
+            assert data2["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_get_not_found(self, adapter):
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/v1/responses/resp_nonexistent")
+            assert resp.status == 404
+
+    @pytest.mark.asyncio
+    async def test_get_requires_auth(self, auth_adapter):
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/v1/responses/resp_any")
+            assert resp.status == 401
+
+
+# ---------------------------------------------------------------------------
+# DELETE /v1/responses/{response_id}
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteResponse:
+    @pytest.mark.asyncio
+    async def test_delete_stored_response(self, adapter):
+        """DELETE removes a stored response and returns confirmation."""
+        mock_result = {"final_response": "Hello!", "messages": [], "api_calls": 1}
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "Hi"},
+                )
+
+            data = await resp.json()
+            response_id = data["id"]
+
+            # Delete it
+            resp2 = await cli.delete(f"/v1/responses/{response_id}")
+            assert resp2.status == 200
+            data2 = await resp2.json()
+            assert data2["id"] == response_id
+            assert data2["object"] == "response"
+            assert data2["deleted"] is True
+
+            # Verify it's gone
+            resp3 = await cli.get(f"/v1/responses/{response_id}")
+            assert resp3.status == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found(self, adapter):
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.delete("/v1/responses/resp_nonexistent")
+            assert resp.status == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_requires_auth(self, auth_adapter):
+        app = _create_app(auth_adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.delete("/v1/responses/resp_any")
+            assert resp.status == 401
+
+
+# ---------------------------------------------------------------------------
+# Tool calls in output
+# ---------------------------------------------------------------------------
+
+
+class TestToolCallsInOutput:
+    @pytest.mark.asyncio
+    async def test_tool_calls_in_output(self, adapter):
+        """When agent returns tool calls, they appear as function_call items."""
+        mock_result = {
+            "final_response": "The result is 42.",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_abc123",
+                            "function": {
+                                "name": "calculator",
+                                "arguments": '{"expression": "6*7"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_abc123",
+                    "content": "42",
+                },
+                {
+                    "role": "assistant",
+                    "content": "The result is 42.",
+                },
+            ],
+            "api_calls": 2,
+        }
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "What is 6*7?"},
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            output = data["output"]
+
+            # Should have: function_call, function_call_output, message
+            assert len(output) == 3
+            assert output[0]["type"] == "function_call"
+            assert output[0]["name"] == "calculator"
+            assert output[0]["arguments"] == '{"expression": "6*7"}'
+            assert output[0]["call_id"] == "call_abc123"
+            assert output[1]["type"] == "function_call_output"
+            assert output[1]["call_id"] == "call_abc123"
+            assert output[1]["output"] == "42"
+            assert output[2]["type"] == "message"
+            assert output[2]["content"][0]["text"] == "The result is 42."
+
+    @pytest.mark.asyncio
+    async def test_no_tool_calls_still_works(self, adapter):
+        """Without tool calls, output is just a message."""
+        mock_result = {"final_response": "Hello!", "messages": [], "api_calls": 1}
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "Hello"},
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            assert len(data["output"]) == 1
+            assert data["output"][0]["type"] == "message"
+
+
+# ---------------------------------------------------------------------------
+# Usage / token counting
+# ---------------------------------------------------------------------------
+
+
+class TestUsageCounting:
+    @pytest.mark.asyncio
+    async def test_responses_usage(self, adapter):
+        """Responses API returns real token counts."""
+        mock_result = {"final_response": "Done", "messages": [], "api_calls": 1}
+        usage = {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, usage)
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={"model": "hermes-agent", "input": "Hi"},
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["usage"]["input_tokens"] == 100
+            assert data["usage"]["output_tokens"] == 50
+            assert data["usage"]["total_tokens"] == 150
+
+    @pytest.mark.asyncio
+    async def test_chat_completions_usage(self, adapter):
+        """Chat completions returns real token counts."""
+        mock_result = {"final_response": "Done", "messages": [], "api_calls": 1}
+        usage = {"input_tokens": 200, "output_tokens": 80, "total_tokens": 280}
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, usage)
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "hermes-agent",
+                        "messages": [{"role": "user", "content": "Hi"}],
+                    },
+                )
+
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["usage"]["prompt_tokens"] == 200
+            assert data["usage"]["completion_tokens"] == 80
+            assert data["usage"]["total_tokens"] == 280
+
+
+# ---------------------------------------------------------------------------
+# Truncation
+# ---------------------------------------------------------------------------
+
+
+class TestTruncation:
+    @pytest.mark.asyncio
+    async def test_truncation_auto_limits_history(self, adapter):
+        """With truncation=auto, history over 100 messages is trimmed."""
+        mock_result = {"final_response": "OK", "messages": [], "api_calls": 1}
+
+        # Pre-seed a stored response with a long history
+        long_history = [{"role": "user", "content": f"msg {i}"} for i in range(150)]
+        adapter._response_store.put("resp_prev", {
+            "response": {"id": "resp_prev", "object": "response"},
+            "conversation_history": long_history,
+            "instructions": None,
+        })
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={
+                        "model": "hermes-agent",
+                        "input": "follow up",
+                        "previous_response_id": "resp_prev",
+                        "truncation": "auto",
+                    },
+                )
+
+        assert resp.status == 200
+        call_kwargs = mock_run.call_args.kwargs
+        # History should be truncated to 100
+        assert len(call_kwargs["conversation_history"]) <= 100
+
+    @pytest.mark.asyncio
+    async def test_no_truncation_keeps_full_history(self, adapter):
+        """Without truncation=auto, long history is passed as-is."""
+        mock_result = {"final_response": "OK", "messages": [], "api_calls": 1}
+
+        long_history = [{"role": "user", "content": f"msg {i}"} for i in range(150)]
+        adapter._response_store.put("resp_prev2", {
+            "response": {"id": "resp_prev2", "object": "response"},
+            "conversation_history": long_history,
+            "instructions": None,
+        })
+
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (mock_result, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+                resp = await cli.post(
+                    "/v1/responses",
+                    json={
+                        "model": "hermes-agent",
+                        "input": "follow up",
+                        "previous_response_id": "resp_prev2",
+                    },
+                )
+
+        assert resp.status == 200
+        call_kwargs = mock_run.call_args.kwargs
+        assert len(call_kwargs["conversation_history"]) == 150
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+
+
+class TestCORS:
+    @pytest.mark.asyncio
+    async def test_cors_headers_on_get(self, adapter):
+        """CORS headers present on normal responses."""
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            resp = await cli.get("/health")
+            assert resp.status == 200
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+            assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+            assert "DELETE" in resp.headers.get("Access-Control-Allow-Methods", "")
+
+    @pytest.mark.asyncio
+    async def test_cors_options_preflight(self, adapter):
+        """OPTIONS preflight request returns CORS headers."""
+        app = _create_app(adapter)
+        async with TestClient(TestServer(app)) as cli:
+            # OPTIONS to a known path — aiohttp will route through middleware
+            resp = await cli.options("/health")
+            assert resp.status == 200
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+            assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
