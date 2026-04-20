@@ -7988,8 +7988,8 @@ class AIAgent:
                 _fixed_temperature_for_model,
             )
             _aux_available = True
-            # Use the fixed-temperature override (e.g. kimi-for-coding → 0.6) if
-            # the model has a strict contract; otherwise the historical 0.3 default.
+            # Use the fixed-temperature override if the model has a strict
+            # contract; otherwise the historical 0.3 default.
             _flush_temperature = _fixed_temperature_for_model(self.model, self.base_url)
             if _flush_temperature is None:
                 _flush_temperature = 0.3

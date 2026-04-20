@@ -117,7 +117,11 @@ class TestSourceLineVerification:
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_async_custom_client_forces_kimi_temperature():
+async def test_generate_summary_async_kimi_preserves_caller_temperature():
+    """Kimi models should use the caller's temperature, not a forced override.
+
+    The Kimi gateway selects the correct temperature server-side.
+    """
     from trajectory_compressor import CompressionConfig, TrajectoryCompressor, TrajectoryMetrics
 
     config = CompressionConfig(
@@ -140,11 +144,12 @@ async def test_generate_summary_async_custom_client_forces_kimi_temperature():
     result = await compressor._generate_summary_async("tool output", metrics)
 
     assert result.startswith("[CONTEXT SUMMARY]:")
-    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 0.6
+    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 0.3
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_async_public_moonshot_kimi_k2_5_forces_temperature_1():
+async def test_generate_summary_async_public_moonshot_kimi_k2_5_preserves_temperature():
+    """kimi-k2.5 on the public Moonshot API should use caller's temperature."""
     from trajectory_compressor import CompressionConfig, TrajectoryCompressor, TrajectoryMetrics
 
     config = CompressionConfig(
@@ -168,12 +173,13 @@ async def test_generate_summary_async_public_moonshot_kimi_k2_5_forces_temperatu
     result = await compressor._generate_summary_async("tool output", metrics)
 
     assert result.startswith("[CONTEXT SUMMARY]:")
-    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 1.0
+    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 0.3
 
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_async_public_moonshot_cn_kimi_k2_5_forces_temperature_1():
+async def test_generate_summary_async_public_moonshot_cn_kimi_k2_5_preserves_temperature():
+    """kimi-k2.5 on api.moonshot.cn should use caller's temperature."""
     from trajectory_compressor import CompressionConfig, TrajectoryCompressor, TrajectoryMetrics
 
     config = CompressionConfig(
@@ -197,4 +203,4 @@ async def test_generate_summary_async_public_moonshot_cn_kimi_k2_5_forces_temper
     result = await compressor._generate_summary_async("tool output", metrics)
 
     assert result.startswith("[CONTEXT SUMMARY]:")
-    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 1.0
+    assert async_client.chat.completions.create.call_args.kwargs["temperature"] == 0.3
