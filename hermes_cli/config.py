@@ -23,7 +23,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, TypedDict, Union
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +343,354 @@ def _ensure_hermes_home_managed(home: Path):
 # Config loading/saving
 # =============================================================================
 
-DEFAULT_CONFIG = {
+class _AgentConfig(TypedDict):
+    max_turns: int
+    gateway_timeout: int
+    restart_drain_timeout: int
+    service_tier: str
+    tool_use_enforcement: str
+    gateway_timeout_warning: int
+    gateway_notify_interval: int
+
+class _TerminalConfig(TypedDict):
+    backend: str
+    modal_mode: str
+    cwd: str
+    timeout: int
+    env_passthrough: List[str]
+    docker_image: str
+    docker_forward_env: List[str]
+    docker_env: Dict[str, str]
+    singularity_image: str
+    modal_image: str
+    daytona_image: str
+    container_cpu: int
+    container_memory: int
+    container_disk: int
+    container_persistent: bool
+    docker_volumes: List[str]
+    docker_mount_cwd_to_workspace: bool
+    persistent_shell: bool
+
+
+class _BrowserConfig(TypedDict):
+    inactivity_timeout: int
+    command_timeout: int
+    record_sessions: bool
+    allow_private_urls: bool
+    cdp_url: str
+    camofox: _CamofoxConfig
+
+
+class _CheckpointsConfig(TypedDict):
+    enabled: bool
+    max_snapshots: int
+
+
+class _CompressionConfig(TypedDict):
+    enabled: bool
+    threshold: float
+    target_ratio: float
+    protect_last_n: int
+
+
+class _BedrockDiscoveryConfig(TypedDict):
+    enabled: bool
+    provider_filter: List[str]
+    refresh_interval: int
+
+
+class _BedrockGuardrailConfig(TypedDict):
+    guardrail_identifier: str
+    guardrail_version: str
+    stream_processing_mode: str
+    trace: str
+
+
+class _BedrockConfig(TypedDict):
+    region: str
+    discovery: _BedrockDiscoveryConfig
+    guardrail: _BedrockGuardrailConfig
+
+
+class _AuxiliaryTaskConfig(TypedDict, total=False):
+    provider: str
+    model: str
+    base_url: str
+    api_key: str
+    timeout: int
+    extra_body: Dict[str, Any]
+    max_concurrency: int
+    download_timeout: int
+
+
+class _AuxiliaryConfig(TypedDict):
+    vision: _AuxiliaryTaskConfig
+    web_extract: _AuxiliaryTaskConfig
+    compression: _AuxiliaryTaskConfig
+    session_search: _AuxiliaryTaskConfig
+    skills_hub: _AuxiliaryTaskConfig
+    approval: _AuxiliaryTaskConfig
+    mcp: _AuxiliaryTaskConfig
+    flush_memories: _AuxiliaryTaskConfig
+    title_generation: _AuxiliaryTaskConfig
+
+
+class _UserMessagePreviewConfig(TypedDict):
+    first_lines: int
+    last_lines: int
+
+
+class _DisplayConfig(TypedDict):
+    compact: bool
+    personality: str
+    resume_display: str
+    busy_input_mode: str
+    bell_on_complete: bool
+    show_reasoning: bool
+    streaming: bool
+    final_response_markdown: str
+    inline_diffs: bool
+    show_cost: bool
+    skin: str
+    user_message_preview: _UserMessagePreviewConfig
+    interim_assistant_messages: bool
+    tool_progress_command: bool
+    tool_progress_overrides: Dict[str, Any]
+    tool_preview_length: int
+    platforms: Dict[str, Any]
+
+
+class _DashboardConfig(TypedDict):
+    theme: str
+
+
+class _PrivacyConfig(TypedDict):
+    redact_pii: bool
+
+
+class _EdgeTtsConfig(TypedDict):
+    voice: str
+
+
+class _ElevenlabsTtsConfig(TypedDict):
+    voice_id: str
+    model_id: str
+
+
+class _OpenaiTtsConfig(TypedDict):
+    model: str
+    voice: str
+
+
+class _XaiTtsConfig(TypedDict):
+    voice_id: str
+    language: str
+    sample_rate: int
+    bit_rate: int
+
+
+class _MistralTtsConfig(TypedDict):
+    model: str
+    voice_id: str
+
+
+class _NeuttsConfig(TypedDict):
+    ref_audio: str
+    ref_text: str
+    model: str
+    device: str
+
+
+class _TtsConfig(TypedDict):
+    provider: str
+    edge: _EdgeTtsConfig
+    elevenlabs: _ElevenlabsTtsConfig
+    openai: _OpenaiTtsConfig
+    xai: _XaiTtsConfig
+    mistral: _MistralTtsConfig
+    neutts: _NeuttsConfig
+
+
+class _LocalSttConfig(TypedDict):
+    model: str
+    language: str
+
+
+class _OpenaiSttConfig(TypedDict):
+    model: str
+
+
+class _MistralSttConfig(TypedDict):
+    model: str
+
+
+class _SttConfig(TypedDict):
+    enabled: bool
+    provider: str
+    local: _LocalSttConfig
+    openai: _OpenaiSttConfig
+    mistral: _MistralSttConfig
+
+
+class _VoiceConfig(TypedDict):
+    record_key: str
+    max_recording_seconds: int
+    auto_tts: bool
+    silence_threshold: int
+    silence_duration: float
+
+
+class _HumanDelayConfig(TypedDict):
+    mode: str
+    min_ms: int
+    max_ms: int
+
+
+class _ContextConfig(TypedDict):
+    engine: str
+
+
+class _MemoryConfig(TypedDict):
+    memory_enabled: bool
+    user_profile_enabled: bool
+    memory_char_limit: int
+    user_char_limit: int
+    provider: str
+
+
+class _DelegationConfig(TypedDict):
+    model: str
+    provider: str
+    base_url: str
+    api_key: str
+    max_iterations: int
+    reasoning_effort: str
+
+
+class _SkillsConfig(TypedDict):
+    external_dirs: List[str]
+
+
+class _ChannelPromptsConfig(TypedDict):
+    channel_prompts: Dict[str, str]
+
+
+class _DiscordConfig(TypedDict):
+    require_mention: bool
+    free_response_channels: str
+    allowed_channels: str
+    auto_thread: bool
+    reactions: bool
+    channel_prompts: Dict[str, str]
+    server_actions: str
+
+
+class _ApprovalsConfig(TypedDict):
+    mode: str
+    timeout: int
+    cron_mode: str
+
+
+class _WebsiteBlocklistConfig(TypedDict):
+    enabled: bool
+    domains: List[str]
+    shared_files: List[str]
+
+
+class _SecurityConfig(TypedDict):
+    redact_secrets: bool
+    tirith_enabled: bool
+    tirith_path: str
+    tirith_timeout: int
+    tirith_fail_open: bool
+    website_blocklist: _WebsiteBlocklistConfig
+
+
+class _CronConfig(TypedDict):
+    wrap_response: bool
+    max_parallel_jobs: Optional[int]
+
+
+class _CodeExecutionConfig(TypedDict):
+    mode: str
+
+
+class _LoggingConfig(TypedDict):
+    level: str
+    max_size_mb: int
+    backup_count: int
+
+
+class _NetworkConfig(TypedDict):
+    force_ipv4: bool
+
+
+class _DefaultConfig(TypedDict):
+    model: str
+    providers: Dict[str, Any]
+    fallback_providers: List[Any]
+    credential_pool_strategies: Dict[str, Any]
+    toolsets: List[str]
+    agent: _AgentConfig
+    terminal: _TerminalConfig
+    browser: _BrowserConfig
+    checkpoints: _CheckpointsConfig
+    file_read_max_chars: int
+    compression: _CompressionConfig
+    bedrock: _BedrockConfig
+    auxiliary: _AuxiliaryConfig
+    display: _DisplayConfig
+    dashboard: _DashboardConfig
+    privacy: _PrivacyConfig
+    tts: _TtsConfig
+    stt: _SttConfig
+    voice: _VoiceConfig
+    human_delay: _HumanDelayConfig
+    context: _ContextConfig
+    memory: _MemoryConfig
+    delegation: _DelegationConfig
+    prefill_messages_file: str
+    skills: _SkillsConfig
+    honcho: Dict[str, Any]
+    timezone: str
+    discord: _DiscordConfig
+    whatsapp: Dict[str, Any]
+    telegram: _ChannelPromptsConfig
+    slack: _ChannelPromptsConfig
+    mattermost: _ChannelPromptsConfig
+    approvals: _ApprovalsConfig
+    command_allowlist: List[str]
+    quick_commands: Dict[str, Any]
+    hooks: Dict[str, Any]
+    hooks_auto_accept: bool
+    personalities: Dict[str, Any]
+    security: _SecurityConfig
+    cron: _CronConfig
+    code_execution: _CodeExecutionConfig
+    logging: _LoggingConfig
+    network: _NetworkConfig
+    _config_version: int
+
+
+class _EnvVarRequired(TypedDict):
+    description: str
+    prompt: str
+    category: str
+
+
+class _EnvVarOptional(TypedDict, total=False):
+    url: Optional[str]
+    password: bool
+    tools: List[str]
+    advanced: bool
+
+
+class _EnvVarInfo(_EnvVarRequired, _EnvVarOptional):
+    pass
+
+
+DEFAULT_CONFIG: _DefaultConfig = {
     "model": "",
     "providers": {},
     "fallback_providers": [],
@@ -874,7 +1221,7 @@ ENV_VARS_BY_VERSION: Dict[int, List[str]] = {
 REQUIRED_ENV_VARS = {}
 
 # Optional environment variables that enhance functionality
-OPTIONAL_ENV_VARS = {
+OPTIONAL_ENV_VARS: Dict[str, _EnvVarInfo] = {
     # ── Provider (handled in provider selection, not shown in checklists) ──
     "NOUS_BASE_URL": {
         "description": "Nous Portal base URL override",
@@ -1808,7 +2155,7 @@ def get_missing_config_fields() -> List[Dict[str, Any]]:
     config = load_config()
     missing = []
 
-    def _check(defaults: dict, current: dict, prefix: str = ""):
+    def _check(defaults: Dict[str, Any], current: Dict[str, Any], prefix: str = ""):
         for key, default_value in defaults.items():
             if key.startswith('_'):
                 continue
@@ -1822,7 +2169,7 @@ def get_missing_config_fields() -> List[Dict[str, Any]]:
             elif isinstance(default_value, dict) and isinstance(current.get(key), dict):
                 _check(default_value, current[key], full_key)
 
-    _check(DEFAULT_CONFIG, config)
+    _check(dict(DEFAULT_CONFIG), config)
     return missing
 
 
@@ -2762,7 +3109,7 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
     return results
 
 
-def _deep_merge(base: dict, override: dict) -> dict:
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively merge *override* into *base*, preserving nested defaults.
 
     Keys in *override* take precedence. If both values are dicts the merge
@@ -2951,7 +3298,7 @@ def load_config() -> Dict[str, Any]:
     ensure_hermes_home()
     config_path = get_config_path()
     
-    config = copy.deepcopy(DEFAULT_CONFIG)
+    config: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
     
     if config_path.exists():
         try:
@@ -3627,7 +3974,7 @@ def edit_config():
     
     # Ensure config exists
     if not config_path.exists():
-        save_config(DEFAULT_CONFIG)
+        save_config(dict(DEFAULT_CONFIG))
         print(f"Created {config_path}")
     
     # Find editor

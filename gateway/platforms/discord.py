@@ -3599,7 +3599,7 @@ if DISCORD_AVAILABLE:
                 )
                 return
 
-            provider_slug = interaction.data["values"][0]
+            provider_slug = interaction.data["values"][0]  # ty: ignore[not-subscriptable]
             self._selected_provider = provider_slug
             provider = next(
                 (p for p in self.providers if p["slug"] == provider_slug), None
@@ -3634,7 +3634,7 @@ if DISCORD_AVAILABLE:
                 return
 
             self.resolved = True
-            model_id = interaction.data["values"][0]
+            model_id = interaction.data["values"][0]  # ty: ignore[not-subscriptable]
 
             try:
                 result_text = await self.on_model_selected(

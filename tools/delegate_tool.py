@@ -760,7 +760,7 @@ def delegate_task(
 
     n_tasks = len(task_list)
     # Track goal labels for progress display (truncated for readability)
-    task_labels = [t["goal"][:40] for t in task_list]
+    task_labels = [str(t["goal"] or "")[:40] for t in task_list]
 
     # Save parent tool names BEFORE any child construction mutates the global.
     # _build_child_agent() calls AIAgent() which calls get_tool_definitions(),

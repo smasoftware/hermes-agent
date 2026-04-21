@@ -10098,7 +10098,7 @@ class AIAgent:
                         auth_method = "Bearer (OAuth/setup-token)" if _is_oauth_token(key) else "x-api-key (API key)"
                         print(f"{self.log_prefix}🔐 Anthropic 401 — authentication failed.")
                         print(f"{self.log_prefix}   Auth method: {auth_method}")
-                        print(f"{self.log_prefix}   Token prefix: {key[:12]}..." if key and len(key) > 12 else f"{self.log_prefix}   Token: (empty or short)")
+                        print(f"{self.log_prefix}   Token prefix: {str(key)[:12]}..." if key and len(str(key)) > 12 else f"{self.log_prefix}   Token: (empty or short)")
                         print(f"{self.log_prefix}   Troubleshooting:")
                         from hermes_constants import display_hermes_home as _dhh_fn
                         _dhh = _dhh_fn()
@@ -11444,7 +11444,7 @@ class AIAgent:
                         messages.append(assistant_msg)
 
                         if reasoning_text:
-                            reasoning_preview = reasoning_text[:500] + "..." if len(reasoning_text) > 500 else reasoning_text
+                            reasoning_preview = str(reasoning_text)[:500] + "..." if len(str(reasoning_text)) > 500 else reasoning_text
                             logger.warning(
                                 "Reasoning-only response (no visible content) "
                                 "after exhausting retries and fallback. "
