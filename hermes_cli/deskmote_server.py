@@ -267,6 +267,70 @@ def create_app(auth_token: str):
             logger.error("History error for session %s: %s", session_id, e)
             raise HTTPException(status_code=500, detail=str(e))
 
+    # ------------------------------------------------------------------
+    # Alerts endpoint (prompt/error scanner)
+    # ------------------------------------------------------------------
+    _active_alerts: list[dict] = []
+    _last_scan: float = 0.0
+    _SCAN_INTERVAL = 10.0  # seconds
+
+    def _scan_prompts() -> list[dict]:
+        """Scan tmux panes for pending prompts. No LLM calls — pure regex."""
+        import re
+        patterns = [
+            r'\[Y/n\]', r'\[y/N\]', r'\(yes/no\)', r'\(y/n\)',
+            r'Continue\?', r'Proceed\?', r'Are you sure\?',
+            r'Password:', r'password:', r'passphrase',
+            r'ERROR', r'FAILED', r'FATAL', r'panic:',
+            r'Permission denied', r'Do you want to',
+        ]
+        prompt_re = re.compile('|'.join(patterns), re.IGNORECASE)
+
+        try:
+            result = subprocess.run(
+                ["tmux", "list-sessions", "-F", "#{session_name}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return []
+        except Exception:
+            return []
+
+        sessions = [s.strip() for s in result.stdout.strip().splitlines() if s.strip()]
+        alerts = []
+        for name in sessions:
+            try:
+                cap = subprocess.run(
+                    ["tmux", "capture-pane", "-t", name, "-p", "-S", "-5"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if cap.returncode != 0:
+                    continue
+                last_lines = cap.stdout.strip().split("\n")[-5:]
+                text = "\n".join(last_lines)
+                matches = prompt_re.findall(text)
+                if matches:
+                    alerts.append({
+                        "tmux_session": name,
+                        "prompt": matches[0],
+                        "context": text.strip(),
+                        "timestamp": time.time(),
+                    })
+            except Exception:
+                continue
+        return alerts
+
+    @app.get("/api/v1/alerts", dependencies=[Depends(verify_token)])
+    async def get_alerts():
+        """Return pending terminal alerts. Scans at most every 10s."""
+        nonlocal _active_alerts, _last_scan
+        now = time.time()
+        if now - _last_scan >= _SCAN_INTERVAL:
+            loop = asyncio.get_event_loop()
+            _active_alerts = await loop.run_in_executor(None, _scan_prompts)
+            _last_scan = now
+        return {"alerts": _active_alerts, "count": len(_active_alerts)}
+
     return app
 
 

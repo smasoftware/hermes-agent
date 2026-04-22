@@ -203,12 +203,132 @@ SEND_KEYS_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# Tool: deskmote_get_workspace
+# ---------------------------------------------------------------------------
+
+def handle_get_workspace(args: dict, **kw) -> str:
+    """Get the full Deskmote workspace (connections, sessions, tabs) from the API."""
+    import os
+    import httpx
+
+    api_key = os.getenv("DESKMOTE_API_KEY", "")
+    api_url = os.getenv("DESKMOTE_API_URL", "https://api.deskmote.io")
+
+    if not api_key:
+        return tool_error("DESKMOTE_API_KEY not set — configure in Deskmote Settings > AI Assistant")
+
+    try:
+        resp = httpx.get(
+            f"{api_url}/api/v1/customer/hermes/workspace",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return tool_error(f"API error {resp.status_code}: {resp.text[:200]}")
+        return tool_result(**resp.json())
+    except Exception as e:
+        return tool_error(f"Failed to query workspace: {e}")
+
+
+GET_WORKSPACE_SCHEMA = {
+    "name": "deskmote_get_workspace",
+    "description": (
+        "Get the full Deskmote workspace from the cloud API — all connections (hosts), "
+        "sessions, and tabs with their friendly names. Use this to map tmux session "
+        "names to Host → Session → Shell names for clearer responses. "
+        "Returns connections and workspace tree."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Tool: deskmote_check_prompts
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate a terminal needs attention
+_PROMPT_PATTERNS = [
+    r'\[Y/n\]', r'\[y/N\]', r'\(yes/no\)', r'\(y/n\)',
+    r'Continue\?', r'Proceed\?', r'Are you sure\?',
+    r'Press any key', r'Press Enter', r'Press RETURN',
+    r'Password:', r'password:', r'passphrase',
+    r'Enter .*:', r'Confirm .*:',
+    r'ERROR', r'FAILED', r'FATAL', r'panic:',
+    r'Permission denied', r'Access denied',
+    r'Do you want to', r'Would you like to',
+    r'Overwrite.*\?', r'Replace.*\?', r'Delete.*\?',
+]
+
+import re
+_PROMPT_RE = re.compile('|'.join(_PROMPT_PATTERNS), re.IGNORECASE)
+
+
+def handle_check_prompts(args: dict, **kw) -> str:
+    """Scan all tmux sessions for pending prompts/errors that need attention."""
+    rc, stdout, stderr = _run_tmux(["list-sessions", "-F", "#{session_name}"])
+    if rc != 0:
+        return tool_result(alerts=[], message="No tmux sessions active.")
+
+    sessions = [s.strip() for s in stdout.strip().splitlines() if s.strip()]
+    alerts = []
+
+    for session_name in sessions:
+        # Capture last 5 lines of each pane
+        cap_rc, cap_out, _ = _run_tmux(["capture-pane", "-t", session_name, "-p", "-S", "-5"])
+        if cap_rc != 0 or not cap_out.strip():
+            continue
+
+        last_lines = cap_out.strip().split("\n")[-5:]
+        text = "\n".join(last_lines)
+
+        matches = _PROMPT_RE.findall(text)
+        if matches:
+            alerts.append({
+                "tmux_session": session_name,
+                "prompt": matches[0],
+                "context": text.strip(),
+            })
+
+    if not alerts:
+        return tool_result(alerts=[], message="No pending prompts or errors found.")
+
+    return tool_result(
+        alerts=alerts,
+        message=f"Found {len(alerts)} session(s) needing attention.",
+    )
+
+
+CHECK_PROMPTS_SCHEMA = {
+    "name": "deskmote_check_prompts",
+    "description": (
+        "Scan all tmux sessions for pending prompts, confirmation dialogs, "
+        "password requests, or errors that need user attention. Returns a list "
+        "of alerts with the tmux session name and the prompt text. Use "
+        "deskmote_get_workspace to map tmux names to friendly Host/Session/Shell names."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Availability check
 # ---------------------------------------------------------------------------
 
 def check_deskmote_available() -> bool:
     """Deskmote tools require tmux to be installed on the host."""
     return shutil.which("tmux") is not None
+
+
+def check_workspace_available() -> bool:
+    """Workspace tool requires DESKMOTE_API_KEY."""
+    import os
+    return bool(os.getenv("DESKMOTE_API_KEY"))
 
 
 # ---------------------------------------------------------------------------
@@ -243,4 +363,24 @@ registry.register(
     check_fn=check_deskmote_available,
     description="Send keystrokes to a tmux pane",
     emoji="⌨️",
+)
+
+registry.register(
+    name="deskmote_get_workspace",
+    toolset="deskmote",
+    schema=GET_WORKSPACE_SCHEMA,
+    handler=handle_get_workspace,
+    check_fn=check_workspace_available,
+    description="Get Deskmote workspace (hosts, sessions, tabs) from API",
+    emoji="🌐",
+)
+
+registry.register(
+    name="deskmote_check_prompts",
+    toolset="deskmote",
+    schema=CHECK_PROMPTS_SCHEMA,
+    handler=handle_check_prompts,
+    check_fn=check_deskmote_available,
+    description="Scan all sessions for pending prompts or errors",
+    emoji="🔔",
 )
