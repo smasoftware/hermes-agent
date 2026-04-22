@@ -104,6 +104,7 @@ def create_app(auth_token: str):
     # ------------------------------------------------------------------
     _agent_cache: OrderedDict[str, tuple] = OrderedDict()
     _agent_locks: dict[str, asyncio.Lock] = {}
+    _conversation_history: dict[str, list] = {}
     _cache_lock = threading.Lock()
 
     def _get_or_create_lock(session_id: str) -> asyncio.Lock:
@@ -209,15 +210,24 @@ def create_app(auth_token: str):
         async with session_lock:
             try:
                 agent = _get_agent(req.session_id)
+
+                # Get existing conversation history for this session
+                history = _conversation_history.get(req.session_id, [])
+
                 # Run synchronous agent in thread pool
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
                     lambda: agent.run_conversation(
                         user_message=req.message,
+                        conversation_history=history if history else None,
                         task_id=req.session_id,
                     ),
                 )
+
+                # Store updated conversation history for next turn
+                if result and result.get("message_history"):
+                    _conversation_history[req.session_id] = result["message_history"]
 
                 return ChatResponse(
                     response=result.get("final_response") or "" if result else "",
