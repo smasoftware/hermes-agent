@@ -64,7 +64,7 @@ def ensure_token() -> str:
 def _resolve_runtime_kwargs() -> tuple[str, dict]:
     """Resolve LLM provider credentials from Hermes config."""
     from hermes_cli.config import load_config
-    from hermes_cli.auth import resolve_runtime_provider
+    from hermes_cli.runtime_provider import resolve_runtime_provider
 
     config = load_config()
     model_config = config.get("model", {})
@@ -75,12 +75,15 @@ def _resolve_runtime_kwargs() -> tuple[str, dict]:
     provider = model_config.get("provider", "auto")
 
     runtime = resolve_runtime_provider(
-        provider_hint=provider,
-        model=model,
-        config=config,
+        requested=provider if provider != "auto" else None,
     )
 
-    return model, runtime
+    return model, {
+        "api_key": runtime.get("api_key"),
+        "base_url": runtime.get("base_url"),
+        "provider": runtime.get("provider"),
+        "api_mode": runtime.get("api_mode"),
+    }
 
 
 def create_app(auth_token: str):
