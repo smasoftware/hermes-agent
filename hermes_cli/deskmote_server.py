@@ -220,11 +220,11 @@ def create_app(auth_token: str):
                 )
 
                 return ChatResponse(
-                    response=result.get("final_response", ""),
+                    response=result.get("final_response") or "" if result else "",
                     session_id=req.session_id,
-                    model=result.get("model", ""),
-                    input_tokens=result.get("input_tokens", 0),
-                    output_tokens=result.get("output_tokens", 0),
+                    model=(result.get("model") or "") if result else "",
+                    input_tokens=(result.get("input_tokens") or 0) if result else 0,
+                    output_tokens=(result.get("output_tokens") or 0) if result else 0,
                 )
             except Exception as e:
                 logger.error("Chat error for session %s: %s", req.session_id, e)
