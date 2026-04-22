@@ -4151,6 +4151,13 @@ def cmd_status(args):
     show_status(args)
 
 
+def cmd_deskmote_server(args):
+    """Run Deskmote HTTP API server."""
+    from hermes_cli.deskmote_server import run_server
+
+    run_server(host=args.host, port=args.port)
+
+
 def cmd_cron(args):
     """Cron job management."""
     from hermes_cli.cron import cron_command
@@ -6982,6 +6989,22 @@ For more help on a command:
         "--deep", action="store_true", help="Run deep checks (may take longer)"
     )
     status_parser.set_defaults(func=cmd_status)
+
+    # =========================================================================
+    # deskmote-server command
+    # =========================================================================
+    deskmote_parser = subparsers.add_parser(
+        "deskmote-server",
+        help="Run Deskmote HTTP API server",
+        description="Start the Deskmote integration HTTP server for native app communication",
+    )
+    deskmote_parser.add_argument(
+        "--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)"
+    )
+    deskmote_parser.add_argument(
+        "--port", type=int, default=7420, help="Port to listen on (default: 7420)"
+    )
+    deskmote_parser.set_defaults(func=cmd_deskmote_server)
 
     # =========================================================================
     # cron command
