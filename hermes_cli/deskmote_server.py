@@ -61,6 +61,30 @@ def ensure_token() -> str:
     return token
 
 
+_DEFAULT_DESKMOTE_TOOLSETS = ["deskmote", "terminal", "file", "web", "skills", "memory", "browser"]
+
+
+def _resolve_enabled_toolsets() -> list[str]:
+    """Resolve toolsets for the Deskmote platform from config.yaml.
+
+    Honours ``platform_toolsets.deskmote`` verbatim (the Deskmote app writes
+    it via its Hermes setup flow) so toolsets like ``browser`` can be enabled
+    per-host without a code change. Reads the raw config key instead of
+    ``_get_platform_tools`` because that helper filters to CONFIGURABLE_TOOLSETS
+    and would silently drop registry-registered toolsets like ``deskmote``.
+    """
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config() or {}
+        toolsets = (config.get("platform_toolsets") or {}).get("deskmote")
+        if isinstance(toolsets, list) and toolsets:
+            return [str(ts) for ts in toolsets]
+    except Exception:
+        logger.warning("Failed to read platform_toolsets.deskmote; using defaults", exc_info=True)
+    return list(_DEFAULT_DESKMOTE_TOOLSETS)
+
+
 def _resolve_runtime_kwargs() -> tuple[str, dict]:
     """Resolve LLM provider credentials from Hermes config."""
     from hermes_cli.config import load_config
@@ -136,7 +160,7 @@ def create_app(auth_token: str):
             model=model,
             max_iterations=30,
             quiet_mode=True,
-            enabled_toolsets=["deskmote", "terminal", "file", "web", "skills", "memory"],
+            enabled_toolsets=_resolve_enabled_toolsets(),
             session_id=session_id,
             platform="deskmote",
             session_db=session_db,
