@@ -168,6 +168,7 @@ def create_app(auth_token: str):
     class ChatRequest(BaseModel):
         message: str
         session_id: str = "default"
+        cwd: str = ""  # Working directory for OpenWolf context
 
     class ChatResponse(BaseModel):
         response: str
@@ -201,6 +202,53 @@ def create_app(auth_token: str):
 
         return HealthResponse(status="ok", version=version, model=model)
 
+    def _load_openwolf_context(cwd: str) -> Optional[str]:
+        """Load OpenWolf context files from a project directory."""
+        if not cwd:
+            return None
+
+        wolf_dir = Path(cwd) / ".wolf"
+        if not wolf_dir.is_dir():
+            return None
+
+        context_parts = []
+
+        # Read cerebrum (conventions, learnings, do-not-repeat)
+        cerebrum = wolf_dir / "cerebrum.md"
+        if cerebrum.exists():
+            try:
+                content = cerebrum.read_text(errors="replace")[:4000]
+                context_parts.append(f"## Project Conventions (cerebrum.md)\n{content}")
+            except Exception:
+                pass
+
+        # Read anatomy (file descriptions)
+        anatomy = wolf_dir / "anatomy.md"
+        if anatomy.exists():
+            try:
+                content = anatomy.read_text(errors="replace")[:6000]
+                context_parts.append(f"## Project Structure (anatomy.md)\n{content}")
+            except Exception:
+                pass
+
+        # Read memory (session log)
+        memory = wolf_dir / "memory.md"
+        if memory.exists():
+            try:
+                content = memory.read_text(errors="replace")[-2000:]  # Last 2000 chars
+                context_parts.append(f"## Recent Activity (memory.md)\n{content}")
+            except Exception:
+                pass
+
+        if not context_parts:
+            return None
+
+        return (
+            "# OpenWolf Project Context\n"
+            f"Working directory: {cwd}\n\n"
+            + "\n\n".join(context_parts)
+        )
+
     @app.post("/api/v1/chat", dependencies=[Depends(verify_token)])
     async def chat(req: ChatRequest):
         if not req.message.strip():
@@ -214,20 +262,33 @@ def create_app(auth_token: str):
                 # Get existing conversation history for this session
                 history = _conversation_history.get(req.session_id, [])
 
+                # Build system message with OpenWolf context if available
+                system_msg = None
+                wolf_context = _load_openwolf_context(req.cwd)
+                if wolf_context:
+                    system_msg = (
+                        "You are Hermes, an AI assistant integrated with Deskmote. "
+                        "You have access to the user's project context below. "
+                        "Use it to give informed, project-specific answers. "
+                        "Follow the conventions and avoid the mistakes listed in Do-Not-Repeat.\n\n"
+                        + wolf_context
+                    )
+
                 # Run synchronous agent in thread pool
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None,
                     lambda: agent.run_conversation(
                         user_message=req.message,
+                        system_message=system_msg,
                         conversation_history=history if history else None,
                         task_id=req.session_id,
                     ),
                 )
 
                 # Store updated conversation history for next turn
-                if result and result.get("message_history"):
-                    _conversation_history[req.session_id] = result["message_history"]
+                if result and result.get("messages"):
+                    _conversation_history[req.session_id] = result["messages"]
 
                 return ChatResponse(
                     response=result.get("final_response") or "" if result else "",
@@ -350,4 +411,9 @@ def run_server(host: str = "0.0.0.0", port: int = 7420):
         port=port,
         log_level="info",
         access_log=False,
+        # Default keep-alive is 5s: macOS URLSession reuses idle connections
+        # and POSTs onto the closed socket -> NSURLErrorNetworkConnectionLost
+        # (-1005) in the Deskmote app. Keep connections open longer than any
+        # realistic think-time between chat messages.
+        timeout_keep_alive=75,
     )
