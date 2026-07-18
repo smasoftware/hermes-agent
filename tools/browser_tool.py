@@ -1098,6 +1098,7 @@ def _run_browser_command(
     command: str,
     args: List[str] = None,
     timeout: Optional[int] = None,
+    _retried: bool = False,
 ) -> Dict[str, Any]:
     """
     Run an agent-browser CLI command using our pre-created Browserbase session.
@@ -1250,6 +1251,35 @@ def _run_browser_command(
                         logger.warning("snapshot returned empty content. "
                                        "Possible stale daemon or CDP connection issue. "
                                        "returncode=%s", returncode)
+                # Stale-daemon self-heal (CDP mode): the long-lived daemon caches
+                # its Playwright connectOverCDP handle. If the CDP browser
+                # restarts (e.g. obscura relaunched by launchd), every command
+                # fails against the dead handle forever. Detect the connection-
+                # level failure signatures, tell the daemon to drop its browser
+                # state via `close`, and retry the original command once — the
+                # retry reconnects to the live CDP endpoint.
+                if (
+                    not _retried
+                    and command != "close"
+                    and not parsed.get("success", True)
+                    and session_info.get("cdp_url")
+                ):
+                    err = str(parsed.get("error") or "")
+                    stale_signatures = (
+                        "No page found",
+                        "No browser context found",
+                        "Failed to connect via CDP",
+                        "browser has been closed",
+                        "Target closed",
+                        "Browser is not launched",
+                    )
+                    if any(sig in err for sig in stale_signatures):
+                        logger.warning(
+                            "browser '%s' failed with stale CDP connection (%s) — "
+                            "closing daemon session and retrying once", command, err[:120]
+                        )
+                        _run_browser_command(task_id, "close", [], timeout=10, _retried=True)
+                        return _run_browser_command(task_id, command, args, timeout=timeout, _retried=True)
                 return parsed
             except json.JSONDecodeError:
                 raw = stdout_text[:2000]
